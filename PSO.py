@@ -26,7 +26,7 @@ class global_PSO():
         self.params = params if params is not None else {'c1': 0.5, 'c2': 0.3, 'w': 0.9}
         
         self.init_particles(initial_pos = None, initial_vel = None)
-            
+             
     def init_swarm(self):
         swarm = {}
         swarm['pos'] = np.zeros((self.npoints, self.ndim))
@@ -73,7 +73,7 @@ class global_PSO():
                 evaluate_mask[self.swarm['pos'][:,i] > self.bounds[i][1]] = False
             return evaluate_mask
         
-        if method is 'reflect' or method is 'Reflect':
+        if method == 'reflect' or method == 'Reflect':
             # You see a wall, you go against it, you 'bounce', reflect_param slower 
             for i in range(self.ndim):
                 count = 0
@@ -101,7 +101,7 @@ class global_PSO():
                         self.swarm['vel'][:,i][_mask2] = 0
                         any=False
                         
-        if method is 'border' or method is 'Border':
+        if method == 'border' or method == 'Border':
             # Stay in the edge you cross, no velocity
             for i in range(self.ndim):
                 _mask1 = self.swarm['pos'][:,i] < self.bounds[i][0]
@@ -149,8 +149,9 @@ class global_PSO():
                     self.swarm['val'][j] = np.inf
             if verbose: self.print_info(i)
             self.update_best_pos(i)
-            
-    def plot_animation(self, filename = 'plot.gif', xdim = 0, ydim = 1, best = None):
+
+    def plot_animation(self, filename = 'plot.gif', xdim = 0, ydim = 1, best = None, MPI = False):
+        if MPI and self.rank != 0: return 0
         print('Warning! This plotting code is not efficient, fast or elegant... yet..')
         import bacco
         bacco.plotting.set_alternative1() #Sergio's Style, Really Important!
@@ -172,3 +173,37 @@ class global_PSO():
         animation = camera.animate()
         animation.save(filename, writer = 'imagemagick')
 
+####### From here MPI ########
+    def mpi_scatter_swarm(self):
+        _pos = self.swarm['pos'] if self.rank == 0 else None
+        _pos = self.comm.bcast(_pos, root=0)
+        return _pos
+        
+    def mpi_run(self, f, func_argv = (), bound_correct_method = 'reflect', reflect_param = 0.5, verbose = True):
+        
+        from mpi4py import MPI
+        self.mpi  = MPI
+        self.comm = MPI.COMM_WORLD
+        self.rank = self.comm.Get_rank()
+        self.size = self.comm.Get_size()
+        
+        _pos = self.mpi_scatter_swarm()
+        _val = np.zeros(np.size(self.swarm['val']))
+        for i,p in enumerate(_pos):
+            if i%self.size == self.rank:
+                _val[i] = f(p,*func_argv)
+        self.comm.Reduce(_val,self.swarm['val'], self.mpi.SUM, 0)
+        self.update_best_pos(0)
+        for i in range(1,self.niter):
+            self.update_velocity()
+            self.update_position()
+            evaluate_mask = self.correct_bound(bound_correct_method, reflect_param = reflect_param)
+            _pos = self.mpi_scatter_swarm()
+            _val = np.zeros(np.size(self.swarm['val']))
+            for j in range(self.npoints):
+                p = _pos[j]
+                if j%self.size == self.rank:
+                    _val[j] = f(p,*func_argv) if evaluate_mask[j] else np.inf
+            self.comm.Reduce(_val,self.swarm['val'], self.mpi.SUM, 0)
+            if verbose and self.rank == 0: self.print_info(i)
+            self.update_best_pos(i)

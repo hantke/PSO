@@ -10,6 +10,29 @@ class global_PSO():
                  initial_vel = None,
                  max_speed   = 0.5,
                  backup_name = None):
+        """
+        Global PSO methid
+
+        Args:
+            bounds (array, optional): Boundaries where the PSO is run. Defaults to None.
+            params (dictionary, optional): main parameter of the PSO:
+                                            c1: cognitive parameter. How atracted the particle is to it best personal value.
+                                            c2: social parameter. How atracted the particle is to the best global value.
+                                            w:  Inertia parameter. 
+                                            Defaults to None.
+            npoints (int, optional): Number of points of the PSO. Defaults to 10.
+            niter (int, optional): Number of steps of the PSO. Defaults to 100.
+            initial_pos (array, optional): Initial position of the particles. Defaults to None.
+            initial_vel (array, optional): Initial velocity of the particles. Defaults to None.
+            max_speed (float, optional): maximum speed per axis: 1 means 1 box lenght in that axis. Defaults to 0.5.
+            backup_name (str optional): Name of the file to initialisate the PSO. Defaults to None.
+        """
+        
+        from mpi4py import MPI
+        self.mpi  = MPI
+        self.comm = MPI.COMM_WORLD
+        self.rank = self.comm.Get_rank()
+        self.size = self.comm.Get_size()
         
         if backup_name is not None:
             self.load(backup_name)
@@ -34,6 +57,13 @@ class global_PSO():
         
        
     def save(self, filename):
+        """
+        Save main information of the PSO
+
+        Args:
+            filename (str): Name of the saving file
+        """
+        if self.rank != 0: return
         import deepdish as dd
         d                        = {}
         d['swarm']               = self.swarm
@@ -47,6 +77,12 @@ class global_PSO():
         dd.io.save(filename, d)
         
     def load(self, filename):
+        """
+        Load information of the PSO
+
+        Args:
+            filename (str): Name of the loading file
+        """
         import deepdish as dd
         d = dd.io.load(filename)
         self.swarm     = d['swarm']
@@ -58,6 +94,12 @@ class global_PSO():
         self.params    = d['header']['params']
 
     def init_swarm(self):
+        """
+        Init. the swarm information
+
+        Returns:
+            dictionary: Swarm information
+        """
         swarm = {}
         swarm['pos'] = np.zeros((self.npoints, self.ndim))
         swarm['vel'] = np.zeros((self.npoints, self.ndim))
@@ -73,6 +115,9 @@ class global_PSO():
         return swarm
         
     def update_velocity(self):
+        """
+        Update velocity of the particles
+        """
         #Based on the function from pyswarms
         #https://github.com/ljvmiranda921/pyswarms/blob/master/pyswarms/backend/operators.py
         def _apply_clamp(self):
@@ -91,9 +136,21 @@ class global_PSO():
             self.swarm['vel'][:,i][self.swarm['vel'][:,i] < -self.max_speed[i]] = -self.max_speed[i]
             
     def update_position(self):
-            self.swarm['pos'] += self.swarm['vel']
+        """
+        Update position of the particles
+        """
+        self.swarm['pos'] += self.swarm['vel']
             
     def correct_bound(self, method, reflect_param = 0.5):
+        """
+        Correct boundaries
+
+        Args:
+            method (str): Type of correction:
+                          Reflect: reflect the particle and inverse it velocity
+                          Border:  locate the particle in the closest border with velocity 0 in that axis
+            reflect_param (float, optional): reduce the velocity when reflecting by this factor. Defaults to 0.5.
+        """
         if method == 'reflect' or method == 'Reflect':
             # You see a wall, you go against it, you 'bounce', reflect_param slower 
             for i in range(self.ndim):
@@ -143,10 +200,23 @@ class global_PSO():
             #return evaluate_mask
             
     def init_particles(self, initial_pos = None, initial_vel = None):
+        """
+        Initial location and velocities of the particles
+
+        Args:
+            initial_pos (array or None, optional): Initial position of the particles. If None they are located randomly inside the bondaries. Defaults to None.
+            initial_vel (array or None, optional): Initial velocities of the particles. If None they are located randomly between 0 and the maximum velocity. Defaults to None.
+        """
         self.swarm['pos'] = np.random.random((self.npoints, self.ndim)) if initial_pos is None else initial_pos
         self.swarm['vel'] = np.random.random((self.npoints, self.ndim))*self.max_speed  if initial_vel is None else initial_vel
         
     def update_best_pos(self,index):
+        """
+        Update the best local and global position of the particles
+
+        Args:
+            index (int): ID of the particle
+        """
         self.swarm['pos_histo'][index]   = self.swarm['pos']
         self.swarm['val_histo'][index]   = self.swarm['val']
         for i in range(self.npoints):
@@ -158,9 +228,24 @@ class global_PSO():
         self.swarm['val_bglobal'] = self.swarm['val_blocal'][_ival_global]
     
     def print_info(self,i):
+        """
+        Print summary information of the status of the PSO
+
+        Args:
+            i (int): Step of the PSO cicle
+        """
         print('%d / %d    lower cost: %.03f    best pos: '%(i,self.niter, self.swarm['val_bglobal']),self.swarm['pos_bglobal'])
 
     def plot_animation(self, filename = 'plot.gif', xdim = 0, ydim = 1, best = None):
+        """
+        Make an animation of the position and history of the particles
+
+        Args:
+            filename (str, optional): Name of the gif file. Defaults to 'plot.gif'.
+            xdim (int, optional): Dimention of the x-axis. Defaults to 0.
+            ydim (int, optional): Dimention of the y-axis. Defaults to 1.
+            best (array, optional): Location of the real value, to compare in the plot. Defaults to None.
+        """
         if self.rank != 0: return 
         print('Warning! This plotting code is not efficient, fast or elegant... yet..')
         import bacco
@@ -184,17 +269,27 @@ class global_PSO():
         animation.save(filename, writer = 'imagemagick')
 
     def mpi_scatter_swarm(self):
+        """
+        Share the position of the particles from CPU 0 to the rest of the CPUs
+
+        Returns:
+            array: position of the particles for each CPU
+        """
         _pos = self.swarm['pos'] if self.rank == 0 else None
         _pos = self.comm.bcast(_pos, root=0)
         return _pos
         
     def run(self, f, func_argv = (), bound_correct_method = 'reflect', reflect_param = 0.5, verbose = True):
-        
-        from mpi4py import MPI
-        self.mpi  = MPI
-        self.comm = MPI.COMM_WORLD
-        self.rank = self.comm.Get_rank()
-        self.size = self.comm.Get_size()
+        """
+        Run the PSO. 
+
+        Args:
+            f (function): Function to evaluate the PSO
+            func_argv (tuple, optional): aditional argument of function f. Defaults to ().
+            bound_correct_method (str, optional): Method to correct boundaries. Defaults to 'reflect'.
+            reflect_param (float, optional): Speed decrease factor when particles are reflected when crossing the boundaries. Defaults to 0.5.
+            verbose (bool, optional): Old Classic Verbose. Defaults to True.
+        """
         
         _pos = self.mpi_scatter_swarm()
         _val = np.zeros(np.size(self.swarm['val']))

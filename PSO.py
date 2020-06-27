@@ -8,7 +8,12 @@ class global_PSO():
                  niter = 100,
                  initial_pos = None,
                  initial_vel = None,
-                 max_speed   = 0.5):
+                 max_speed   = 0.5,
+                 backup_name = None):
+        
+        if backup_name is not None:
+            self.load(backup_name)
+            return                                                      
         
         self.ndim    = len(bounds)
         self.npoints = npoints
@@ -26,7 +31,32 @@ class global_PSO():
         self.params = params if params is not None else {'c1': 0.5, 'c2': 0.3, 'w': 0.9}
         
         self.init_particles(initial_pos = None, initial_vel = None)
-             
+        
+       
+    def save(self, filename):
+        import deepdish as dd
+        d                        = {}
+        d['swarm']               = self.swarm
+        d['header']              = {}
+        d['header']['ndim']      = self.ndim
+        d['header']['npoints']   = self.npoints
+        d['header']['niter']     = self.niter
+        d['header']['bounds']    = self.bounds
+        d['header']['max_speed'] = self.max_speed
+        d['header']['params']    = self.params
+        dd.io.save(filename, d)
+        
+    def load(self, filename):
+        import deepdish as dd
+        d = dd.io.load(filename)
+        self.swarm     = d['swarm']
+        self.ndim      = d['header']['ndim']
+        self.npoints   = d['header']['npoints']
+        self.niter     = d['header']['niter']
+        self.bounds    = d['header']['bounds']
+        self.max_speed = d['header']['max_speed']
+        self.params    = d['header']['params']
+
     def init_swarm(self):
         swarm = {}
         swarm['pos'] = np.zeros((self.npoints, self.ndim))
@@ -64,15 +94,6 @@ class global_PSO():
             self.swarm['pos'] += self.swarm['vel']
             
     def correct_bound(self, method, reflect_param = 0.5):
-        evaluate_mask = np.ones(self.npoints, dtype=bool)
-        if method is None:
-            #No method is apply, in that case we simple do not evaluate the function on these points,
-            #It velocity is not affected, so it may go even further.
-            for i in range(self.ndim):
-                evaluate_mask[self.swarm['pos'][:,i] < self.bounds[i][0]] = False
-                evaluate_mask[self.swarm['pos'][:,i] > self.bounds[i][1]] = False
-            return evaluate_mask
-        
         if method == 'reflect' or method == 'Reflect':
             # You see a wall, you go against it, you 'bounce', reflect_param slower 
             for i in range(self.ndim):
@@ -110,10 +131,16 @@ class global_PSO():
                 self.swarm['vel'][:,i][_mask1] = 0
                 self.swarm['pos'][:,i][_mask2] = self.bounds[i][1]
                 self.swarm['vel'][:,i][_mask2] = 0
-                
-        #if methos is 'periodic' or method is 'Periodic' #TODO
         
-        return evaluate_mask
+        #These method can be implemented if needed
+        #if methos is 'periodic' or method is 'Periodic' #TODO
+        #if method is None:
+            ##No method is apply, in that case we simple do not evaluate the function on these points,
+            ##It velocity is not affected, so it may go even further.
+            #for i in range(self.ndim):
+                #evaluate_mask[self.swarm['pos'][:,i] < self.bounds[i][0]] = False
+                #evaluate_mask[self.swarm['pos'][:,i] > self.bounds[i][1]] = False
+            #return evaluate_mask
             
     def init_particles(self, initial_pos = None, initial_vel = None):
         self.swarm['pos'] = np.random.random((self.npoints, self.ndim)) if initial_pos is None else initial_pos
@@ -132,26 +159,9 @@ class global_PSO():
     
     def print_info(self,i):
         print('%d / %d    lower cost: %.03f    best pos: '%(i,self.niter, self.swarm['val_bglobal']),self.swarm['pos_bglobal'])
-        
-    def run(self, f, func_argv = (), bound_correct_method = 'reflect', reflect_param = 0.5, verbose = True):
-        for i,p in enumerate(self.swarm['pos']):
-            self.swarm['val'][i] = f(p,*func_argv)
-        self.update_best_pos(0)
-        for i in range(1,self.niter):
-            self.update_velocity()
-            self.update_position()
-            evaluate_mask = self.correct_bound(bound_correct_method, reflect_param = reflect_param)
-            for j in range(self.npoints):
-                p = self.swarm['pos'][j]
-                if evaluate_mask[j]:
-                    self.swarm['val'][j] = f(p,*func_argv)
-                else:
-                    self.swarm['val'][j] = np.inf
-            if verbose: self.print_info(i)
-            self.update_best_pos(i)
 
-    def plot_animation(self, filename = 'plot.gif', xdim = 0, ydim = 1, best = None, MPI = False):
-        if MPI and self.rank != 0: return 0
+    def plot_animation(self, filename = 'plot.gif', xdim = 0, ydim = 1, best = None):
+        if self.rank != 0: return 
         print('Warning! This plotting code is not efficient, fast or elegant... yet..')
         import bacco
         bacco.plotting.set_alternative1() #Sergio's Style, Really Important!
@@ -173,13 +183,12 @@ class global_PSO():
         animation = camera.animate()
         animation.save(filename, writer = 'imagemagick')
 
-####### From here MPI ########
     def mpi_scatter_swarm(self):
         _pos = self.swarm['pos'] if self.rank == 0 else None
         _pos = self.comm.bcast(_pos, root=0)
         return _pos
         
-    def mpi_run(self, f, func_argv = (), bound_correct_method = 'reflect', reflect_param = 0.5, verbose = True):
+    def run(self, f, func_argv = (), bound_correct_method = 'reflect', reflect_param = 0.5, verbose = True):
         
         from mpi4py import MPI
         self.mpi  = MPI
@@ -195,15 +204,15 @@ class global_PSO():
         self.comm.Reduce(_val,self.swarm['val'], self.mpi.SUM, 0)
         self.update_best_pos(0)
         for i in range(1,self.niter):
-            self.update_velocity()
-            self.update_position()
-            evaluate_mask = self.correct_bound(bound_correct_method, reflect_param = reflect_param)
+            if self.rank == 0:
+                self.update_velocity()
+                self.update_position()
+                self.correct_bound(bound_correct_method, reflect_param = reflect_param)
             _pos = self.mpi_scatter_swarm()
             _val = np.zeros(np.size(self.swarm['val']))
             for j in range(self.npoints):
                 p = _pos[j]
-                if j%self.size == self.rank:
-                    _val[j] = f(p,*func_argv) if evaluate_mask[j] else np.inf
+                if j%self.size == self.rank: _val[j] = f(p,*func_argv)
             self.comm.Reduce(_val,self.swarm['val'], self.mpi.SUM, 0)
             if verbose and self.rank == 0: self.print_info(i)
             self.update_best_pos(i)

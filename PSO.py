@@ -149,4 +149,26 @@ class global_PSO():
                     self.swarm['val'][j] = np.inf
             if verbose: self.print_info(i)
             self.update_best_pos(i)
+            
+    def plot_animation(self, filename = 'plot.gif', xdim = 0, ydim = 1, best = None):
+        print('Warning! This plotting code is not efficient, fast or elegant... yet..')
+        import bacco
+        bacco.plotting.set_alternative1() #Sergio's Style, Really Important!
+        import matplotlib.pyplot as plt
+        import matplotlib.gridspec as gridspec
+        from celluloid import Camera
+            
+        fig,ax = plt.subplots(nrows=1, ncols=1, figsize=(10, 10))
+        ax.set_xlabel(r'$\rm X$', fontsize=40)
+        ax.set_ylabel(r'$\rm Y$', fontsize=40)
+        ax.set_xlim([self.bounds[xdim][xdim],self.bounds[xdim][ydim]])
+        ax.set_ylim([self.bounds[ydim][xdim],self.bounds[ydim][ydim]])
+        camera = Camera(fig)
+        for step in range(self.niter):
+            ax.text(0.05, 0.9, r'$\rm step=%d$'%(step), transform=ax.transAxes, fontsize=30)
+            ax.scatter(self.swarm['pos_histo'][step,:,xdim], self.swarm['pos_histo'][step,:,ydim],s=70,c=['r','g','b','c','m','y'])
+            if best is not None: ax.scatter([best[0],], [best[1],],s=100,c='k')
+            camera.snap()
+        animation = camera.animate()
+        animation.save(filename, writer = 'imagemagick')
 

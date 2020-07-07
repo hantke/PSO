@@ -1,3 +1,10 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+"""
+Implementation of the 'PSO' class and helper functions
+
+"""
+
 import numpy as np
 
 class global_PSO():
@@ -207,8 +214,8 @@ class global_PSO():
             initial_pos (array or None, optional): Initial position of the particles. If None they are located randomly inside the bondaries. Defaults to None.
             initial_vel (array or None, optional): Initial velocities of the particles. If None they are located randomly between 0 and the maximum velocity. Defaults to None.
         """
-        self.swarm['pos'] = np.random.random((self.npoints, self.ndim)) if initial_pos is None else initial_pos
-        self.swarm['vel'] = np.random.random((self.npoints, self.ndim))*self.max_speed  if initial_vel is None else initial_vel
+        self.swarm['pos'] = self.bounds[:,0]+(self.bounds[:,1]-self.bounds[:,0])*np.random.random((self.npoints, self.ndim)) if initial_pos is None else initial_pos
+        self.swarm['vel'] = (1-2*np.random.random((self.npoints, self.ndim)))*self.max_speed  if initial_vel is None else initial_vel
         
     def update_best_pos(self,index):
         """
@@ -248,8 +255,8 @@ class global_PSO():
         """
         if self.rank != 0: return 
         print('Warning! This plotting code is not efficient, fast or elegant... yet..')
-        import bacco
-        bacco.plotting.set_alternative1() #Sergio's Style, Really Important!
+        import plotting
+        plotting.set_style() #Sergio's Style, Really Important!
         import matplotlib.pyplot as plt
         import matplotlib.gridspec as gridspec
         from celluloid import Camera
@@ -298,6 +305,7 @@ class global_PSO():
                 _val[i] = f(p,*func_argv)
         self.comm.Reduce(_val,self.swarm['val'], self.mpi.SUM, 0)
         self.update_best_pos(0)
+        if verbose and self.rank == 0: self.print_info(0)
         for i in range(1,self.niter):
             if self.rank == 0:
                 self.update_velocity()
@@ -309,5 +317,5 @@ class global_PSO():
                 p = _pos[j]
                 if j%self.size == self.rank: _val[j] = f(p,*func_argv)
             self.comm.Reduce(_val,self.swarm['val'], self.mpi.SUM, 0)
-            if verbose and self.rank == 0: self.print_info(i)
             self.update_best_pos(i)
+            if verbose and self.rank == 0: self.print_info(i)
